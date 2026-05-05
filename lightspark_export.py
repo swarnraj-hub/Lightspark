@@ -133,9 +133,9 @@ async def generate_report(page, start_date: str, end_date: str):
 
 # === GMAIL POLLING ===
 def poll_email():
-    """Poll Gmail specifically for Lightspark report emails.
-    Searches FROM @lightspark.com addresses only to avoid false positives from
-    GitHub notifications about the Lightspark repo.
+    """Poll Gmail for the Lightspark report download link.
+    Searches ALL emails from today for any lightspark.com URL — works regardless
+    of which sending address Lightspark uses (e.g. sendgrid, mailgun, etc.).
     """
     import datetime
     print("[gmail] Polling inbox for Lightspark download link...")
@@ -144,38 +144,26 @@ def poll_email():
     imap.select("inbox")
 
     today = datetime.date.today().strftime("%d-%b-%Y")
+    IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".pdf")
 
-    # Search only for actual Lightspark product emails (not GitHub notifications)
-    searches = [
-        f'FROM "lightspark.com" SINCE {today}',
-        f'FROM "lightspark.com"',
-    ]
-
-    # Also accept forwarded emails — check BODY for lightspark download URLs directly
-    fallback_searches = [
-        f'BODY "lightspark.com" SINCE {today}',
-    ]
-
-    IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp")
-
-    for attempt in range(30):
-        all_searches = searches if attempt < 5 else searches + fallback_searches
-        for search_query in all_searches:
+    for attempt in range(60):
+        # Search all emails received today — no FROM filter so any sending domain works
+        for search_q in [f"SINCE {today}", "ALL"]:
             try:
-                _, msgs = imap.search(None, search_query)
+                _, msgs = imap.search(None, search_q)
             except Exception:
                 continue
             ids = msgs[0].split()
             if not ids:
                 continue
 
-            for mid in reversed(ids[-10:]):
+            # Check most recent 20 emails
+            for mid in reversed(ids[-20:]):
                 try:
                     _, data = imap.fetch(mid, "(RFC822)")
                     msg = email_lib.message_from_bytes(data[0][1])
-                    sender = msg.get("From", "")
+                    sender  = msg.get("From", "")
                     subject = msg.get("Subject", "")
-                    print(f"[gmail] Checking: FROM={sender[:60]} SUBJECT={subject[:60]}")
 
                     body = ""
                     if msg.is_multipart():
@@ -185,26 +173,30 @@ def poll_email():
                     else:
                         body = msg.get_payload(decode=True).decode(errors="replace")
 
+                    # Any URL containing lightspark.com that is not an image
                     all_urls = re.findall(r'https?://[^\s"<>\]]+', body)
-                    # Filter out images and non-lightspark URLs
-                    candidate_urls = [
+                    candidates = [
                         u for u in all_urls
-                        if "lightspark" in u.lower()
+                        if "lightspark.com" in u.lower()
                         and not any(u.lower().endswith(ext) for ext in IMAGE_EXTS)
+                        and len(u) > 40  # skip short logo/icon URLs
                     ]
-                    if candidate_urls:
-                        chosen = candidate_urls[0]
-                        print(f"[gmail] Found Lightspark URL on attempt {attempt + 1}: {chosen[:100]}")
+                    if candidates:
+                        chosen = candidates[0]
+                        print(f"[gmail] Found on attempt {attempt+1}  FROM={sender[:50]}")
+                        print(f"[gmail] Subject: {subject[:80]}")
+                        print(f"[gmail] URL: {chosen[:120]}")
                         imap.logout()
                         return chosen
                 except Exception as e:
-                    print(f"[gmail] Error reading message: {e}")
+                    print(f"[gmail] Skip message error: {e}")
+            break  # found emails with SINCE query — no need to try ALL
 
-        print(f"[gmail] Attempt {attempt + 1}/30 — no link yet, waiting 10s...")
+        print(f"[gmail] Attempt {attempt+1}/60 — no Lightspark link yet, waiting 10s...")
         time.sleep(10)
 
     imap.logout()
-    raise Exception("[gmail] No download link found after 5 minutes")
+    raise Exception("[gmail] No Lightspark download link found after 10 minutes")
 
 
 # === DOWNLOAD ===
