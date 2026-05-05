@@ -1,10 +1,5 @@
 name: Lightspark Transaction Export
 
-# Triggered by n8n via GitHub API:
-#   POST https://api.github.com/repos/anubhavjain-hue/unlimit-export/actions/workflows/lightspark-export.yml/dispatches
-#   Headers: Authorization: Bearer <GITHUB_TOKEN>
-#   Body:  { "ref": "main", "inputs": { "start_date": "2026-03-10", "end_date": "2026-03-17" } }
-
 on:
   workflow_dispatch:
     inputs:
@@ -23,58 +18,38 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Python setup ──────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # ── 3. Install dependencies ───────────────────────────────────────────────
       - name: Install Python packages
         run: pip install -r requirements.txt
 
-      - name: Install Playwright browsers + Chrome deps
-        run: |
-          playwright install chromium --with-deps
-          playwright install chrome --with-deps || true
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
 
-      # ── 4. Write .env from GitHub Secrets ─────────────────────────────────────
-      - name: Write .env
-        run: |
-          cat > .env <<EOF
-          LIGHTSPARK_EMAIL=${{ secrets.LIGHTSPARK_EMAIL }}
-          LIGHTSPARK_PASSWORD=${{ secrets.LIGHTSPARK_PASSWORD }}
-          LIGHTSPARK_TOTP_SECRET=${{ secrets.LIGHTSPARK_TOTP_SECRET }}
-          GMAIL_EMAIL=${{ secrets.LIGHTSPARK_EMAIL }}
-          GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }}
-          SLACK_BOT_TOKEN=${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_USER_ID=${{ secrets.SLACK_USER_ID }}
-          S3_ENABLED=true
-          S3_BUCKET=${{ secrets.S3_BUCKET }}
-          LIGHTSPARK_S3_PREFIX=lightspark/raw/
-          AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}
-          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          LIGHTSPARK_COOKIES=${{ secrets.LIGHTSPARK_COOKIES }}
-          PROXY_HOST=${{ secrets.PROXY_HOST }}
-          PROXY_PORT=${{ secrets.PROXY_PORT }}
-          PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
-          PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
-          EOF
-
-      # ── 5. Run script (xvfb gives a virtual display for Chromium) ─────────────
       - name: Run Lightspark Export
+        env:
+          LIGHTSPARK_EMAIL:      ${{ secrets.LIGHTSPARK_EMAIL }}
+          LIGHTSPARK_PASSWORD:   ${{ secrets.LIGHTSPARK_PASSWORD }}
+          LIGHTSPARK_TOTP_SECRET: ${{ secrets.LIGHTSPARK_TOTP_SECRET }}
+          GMAIL_EMAIL:           ${{ secrets.LIGHTSPARK_EMAIL }}
+          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
+          S3_BUCKET:             ${{ secrets.S3_BUCKET }}
+          LIGHTSPARK_S3_PREFIX:  lightspark/raw/
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
           xvfb-run --auto-servernum python lightspark_export.py \
             --start_date "${{ inputs.start_date }}" \
             --end_date   "${{ inputs.end_date }}"
 
-      # ── 6. Upload CSV as artifact ─────────────────────────────────────────────
       - name: Upload CSV artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,13 +58,10 @@ jobs:
           path: downloads/*.csv
           if-no-files-found: warn
 
-      # ── 7. Upload debug screenshots on failure ────────────────────────────────
-      - name: Upload debug screenshots
+      - name: Upload debug screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: lightspark-debug-screenshots
-          path: |
-            ls_dbg_*.png
-            ls_error_*.png
+          path: "*.png"
           if-no-files-found: ignore
