@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Lightspark Transaction Export
-Auth: uses pre-captured LIGHTSPARK_SESSION (base64 Playwright storage state).
-      Session is captured locally (non-headless) to bypass bot detection, then stored in GitHub Secrets.
-Flow: load session -> verify auth -> generate CSV -> poll Gmail -> download -> S3
+Auth: pre-captured LIGHTSPARK_SESSION (base64 Playwright storage state).
+      Capture locally using capture_session.py (non-headless to bypass bot detection).
+Flow: load session -> verify auth -> generate CSV (is between dates) -> poll Gmail -> download -> S3
 """
 
 import argparse
@@ -30,14 +30,15 @@ S3_BUCKET = os.getenv("S3_BUCKET", "payout-recon")
 S3_PREFIX = os.getenv("LIGHTSPARK_S3_PREFIX", "lightspark/raw/")
 
 
-# === SESSION LOADER ===
 def load_session():
     data = os.getenv("LIGHTSPARK_SESSION")
     if not data:
-        raise Exception("LIGHTSPARK_SESSION secret is not set. Run capture_session.py locally and add the output to GitHub Secrets.")
+        raise Exception(
+            "LIGHTSPARK_SESSION secret is not set. "
+            "Run capture_session.py locally and add the output to GitHub Secrets."
+        )
     try:
-        decoded = base64.b64decode(data.strip()).decode()
-        return json.loads(decoded)
+        return json.loads(base64.b64decode(data.strip()).decode())
     except Exception as e:
         raise Exception(f"Failed to decode LIGHTSPARK_SESSION: {e}")
 
@@ -56,36 +57,78 @@ async def ensure_auth(page):
     await page.goto(REPORTS_URL, wait_until="domcontentloaded", timeout=30000)
     await page.wait_for_timeout(3000)
     await screenshot(page, "01_auth_check")
-
     if "login" in page.url:
         raise Exception(
-            "Session expired or invalid. Run capture_session.py locally again and update the LIGHTSPARK_SESSION secret."
+            "Session expired. Run capture_session.py locally again and update LIGHTSPARK_SESSION."
         )
-    print(f"[auth] Session valid — URL: {page.url}")
+    print(f"[auth] Session valid — {page.url}")
 
 
 # === REPORT ===
-async def generate_report(page, start, end):
-    print(f"[report] Requesting CSV for {start} -> {end}")
+async def generate_report(page, start_date: str, end_date: str):
+    """
+    start_date / end_date: YYYY-MM-DD
+    Modal flow: click Custom -> set filter to "is between" -> fill 6 number inputs -> Generate CSV
+    """
+    print(f"[report] Requesting CSV for {start_date} -> {end_date}")
+
+    # Parse dates
+    s_year, s_month, s_day = start_date.split("-")
+    e_year, e_month, e_day = end_date.split("-")
+
     await page.goto(REPORTS_URL, wait_until="domcontentloaded")
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(2000)
     await screenshot(page, "02_reports")
 
-    btn = page.locator("text=Generate transaction report")
+    # Open the generate report modal
+    btn = page.locator("button:has-text('Generate transaction report')")
     await btn.first.click()
-    await page.wait_for_timeout(3000)
-    await screenshot(page, "03_modal")
+    await page.wait_for_timeout(2000)
+    await screenshot(page, "03_modal_opened")
 
-    inputs = page.locator("input[type='text']")
-    await inputs.nth(0).fill(start)
-    await page.keyboard.press("Tab")
-    await inputs.nth(1).fill(end)
-    await screenshot(page, "04_dates")
+    # Click Custom
+    custom_btn = page.locator("button:has-text('Custom')")
+    await custom_btn.first.click()
+    await page.wait_for_timeout(1000)
+    await screenshot(page, "04_custom_selected")
 
-    gen = page.locator("button:has-text('Generate CSV')")
-    await gen.first.click()
+    # Select "is between" from the React Select combobox
+    # The combobox is type=text; type to filter, then ArrowDown+Enter to select
+    combobox = page.locator("input[type='text']").first
+    await combobox.fill("is between")
+    await page.wait_for_timeout(500)
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("Enter")
+    await page.wait_for_timeout(1000)
+    await screenshot(page, "05_is_between")
+
+    # Fill the 6 number inputs: MM DD YYYY (start) then MM DD YYYY (end)
+    date_vals = [s_month, s_day, s_year, e_month, e_day, e_year]
+    await page.evaluate(
+        """(vals) => {
+            const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            ).set;
+            const inputs = document.querySelectorAll('input[type="number"]');
+            vals.forEach((v, i) => {
+                if (inputs[i]) {
+                    setter.call(inputs[i], v);
+                    inputs[i].dispatchEvent(new Event('input',  { bubbles: true }));
+                    inputs[i].dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }""",
+        date_vals,
+    )
+    await page.wait_for_timeout(500)
+    await screenshot(page, "06_dates_set")
+
+    # Click Generate CSV
+    gen_btn = page.locator("button:has-text('Generate CSV')")
+    await gen_btn.first.click()
     print("[report] CSV generation requested")
-    await screenshot(page, "05_csv_requested")
+    await page.wait_for_timeout(2000)
+    await screenshot(page, "07_csv_requested")
 
 
 # === GMAIL POLLING ===
@@ -135,7 +178,7 @@ async def download_file(page, url, filename):
 
     try:
         await page.goto(url, wait_until="domcontentloaded")
-        btn = page.locator("button:has-text('Download'), a:has-text('Download'), text=Download")
+        btn = page.locator("button:has-text('Download'), a:has-text('Download')")
         async with page.expect_download(timeout=60000) as dl:
             await btn.first.click()
         download = await dl.value
