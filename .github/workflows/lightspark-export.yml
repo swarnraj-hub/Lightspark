@@ -36,7 +36,7 @@ jobs:
       - name: Run Lightspark Export
         env:
           LIGHTSPARK_SESSION:    ${{ secrets.LIGHTSPARK_SESSION }}
-          GMAIL_EMAIL:           ${{ secrets.LIGHTSPARK_EMAIL }}
+          GMAIL_EMAIL:           ${{ secrets.GMAIL_EMAIL }}
           GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
           S3_BUCKET:             ${{ secrets.S3_BUCKET }}
           LIGHTSPARK_S3_PREFIX:  lightspark/raw/
