@@ -35,9 +35,7 @@ jobs:
 
       - name: Run Lightspark Export
         env:
-          LIGHTSPARK_EMAIL:      ${{ secrets.LIGHTSPARK_EMAIL }}
-          LIGHTSPARK_PASSWORD:   ${{ secrets.LIGHTSPARK_PASSWORD }}
-          LIGHTSPARK_TOTP_SECRET: ${{ secrets.LIGHTSPARK_TOTP_SECRET }}
+          LIGHTSPARK_SESSION:    ${{ secrets.LIGHTSPARK_SESSION }}
           GMAIL_EMAIL:           ${{ secrets.LIGHTSPARK_EMAIL }}
           GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}
           S3_BUCKET:             ${{ secrets.S3_BUCKET }}
@@ -46,7 +44,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
-          xvfb-run --auto-servernum python lightspark_export.py \
+          python lightspark_export.py \
             --start_date "${{ inputs.start_date }}" \
             --end_date   "${{ inputs.end_date }}"
 
@@ -63,5 +61,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lightspark-debug-screenshots
-          path: "*.png"
+          path: "ls_dbg_*.png"
           if-no-files-found: ignore
