@@ -133,9 +133,9 @@ async def generate_report(page, start_date: str, end_date: str):
 
 # === GMAIL POLLING ===
 def poll_email():
-    """Poll Gmail for the Lightspark report download link.
-    Searches broadly — FROM lightspark OR subject containing lightspark — and
-    accepts any URL from a matching email (not just /download or /csv paths).
+    """Poll Gmail specifically for Lightspark report emails.
+    Searches FROM @lightspark.com addresses only to avoid false positives from
+    GitHub notifications about the Lightspark repo.
     """
     import datetime
     print("[gmail] Polling inbox for Lightspark download link...")
@@ -143,48 +143,58 @@ def poll_email():
     imap.login(GMAIL_EMAIL, GMAIL_PASS)
     imap.select("inbox")
 
-    today = datetime.date.today().strftime("%d-%b-%Y")  # e.g. 05-May-2026
+    today = datetime.date.today().strftime("%d-%b-%Y")
 
-    # Search strategies in order of preference
+    # Search only for actual Lightspark product emails (not GitHub notifications)
     searches = [
-        f'FROM "lightspark" SINCE {today}',
-        f'SUBJECT "lightspark" SINCE {today}',
-        f'BODY "lightspark" SINCE {today}',
-        'FROM "lightspark"',          # fallback: all time
-        'SUBJECT "lightspark"',
+        f'FROM "lightspark.com" SINCE {today}',
+        f'FROM "lightspark.com"',
     ]
 
+    # Also accept forwarded emails — check BODY for lightspark download URLs directly
+    fallback_searches = [
+        f'BODY "lightspark.com" SINCE {today}',
+    ]
+
+    IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp")
+
     for attempt in range(30):
-        for search_query in searches:
-            _, msgs = imap.search(None, search_query)
+        all_searches = searches if attempt < 5 else searches + fallback_searches
+        for search_query in all_searches:
+            try:
+                _, msgs = imap.search(None, search_query)
+            except Exception:
+                continue
             ids = msgs[0].split()
             if not ids:
                 continue
 
-            for mid in reversed(ids[-5:]):
+            for mid in reversed(ids[-10:]):
                 try:
                     _, data = imap.fetch(mid, "(RFC822)")
                     msg = email_lib.message_from_bytes(data[0][1])
+                    sender = msg.get("From", "")
+                    subject = msg.get("Subject", "")
+                    print(f"[gmail] Checking: FROM={sender[:60]} SUBJECT={subject[:60]}")
 
                     body = ""
                     if msg.is_multipart():
                         for part in msg.walk():
-                            ct = part.get_content_type()
-                            if ct in ("text/html", "text/plain"):
+                            if part.get_content_type() in ("text/html", "text/plain"):
                                 body += part.get_payload(decode=True).decode(errors="replace")
                     else:
                         body = msg.get_payload(decode=True).decode(errors="replace")
 
-                    # Extract all https URLs
                     all_urls = re.findall(r'https?://[^\s"<>\]]+', body)
-                    # Prefer URLs that look like download links
-                    preferred = [u for u in all_urls if any(
-                        kw in u.lower() for kw in ("download", "csv", "report", "export", "file")
-                    )]
-                    chosen = preferred[0] if preferred else (all_urls[0] if all_urls else None)
-                    if chosen:
-                        print(f"[gmail] Found link via '{search_query}' on attempt {attempt + 1}")
-                        print(f"[gmail] URL: {chosen[:100]}")
+                    # Filter out images and non-lightspark URLs
+                    candidate_urls = [
+                        u for u in all_urls
+                        if "lightspark" in u.lower()
+                        and not any(u.lower().endswith(ext) for ext in IMAGE_EXTS)
+                    ]
+                    if candidate_urls:
+                        chosen = candidate_urls[0]
+                        print(f"[gmail] Found Lightspark URL on attempt {attempt + 1}: {chosen[:100]}")
                         imap.logout()
                         return chosen
                 except Exception as e:
