@@ -133,36 +133,62 @@ async def generate_report(page, start_date: str, end_date: str):
 
 # === GMAIL POLLING ===
 def poll_email():
+    """Poll Gmail for the Lightspark report download link.
+    Searches broadly — FROM lightspark OR subject containing lightspark — and
+    accepts any URL from a matching email (not just /download or /csv paths).
+    """
+    import datetime
     print("[gmail] Polling inbox for Lightspark download link...")
     imap = imaplib.IMAP4_SSL("imap.gmail.com")
     imap.login(GMAIL_EMAIL, GMAIL_PASS)
     imap.select("inbox")
 
+    today = datetime.date.today().strftime("%d-%b-%Y")  # e.g. 05-May-2026
+
+    # Search strategies in order of preference
+    searches = [
+        f'FROM "lightspark" SINCE {today}',
+        f'SUBJECT "lightspark" SINCE {today}',
+        f'BODY "lightspark" SINCE {today}',
+        'FROM "lightspark"',          # fallback: all time
+        'SUBJECT "lightspark"',
+    ]
+
     for attempt in range(30):
-        _, msgs = imap.search(None, 'FROM "lightspark"')
-        ids = msgs[0].split()
+        for search_query in searches:
+            _, msgs = imap.search(None, search_query)
+            ids = msgs[0].split()
+            if not ids:
+                continue
 
-        for mid in reversed(ids[-10:]):
-            _, data = imap.fetch(mid, "(RFC822)")
-            msg = email_lib.message_from_bytes(data[0][1])
+            for mid in reversed(ids[-5:]):
+                try:
+                    _, data = imap.fetch(mid, "(RFC822)")
+                    msg = email_lib.message_from_bytes(data[0][1])
 
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() in ("text/html", "text/plain"):
-                        body += part.get_payload(decode=True).decode(errors="replace")
-            else:
-                body = msg.get_payload(decode=True).decode(errors="replace")
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            ct = part.get_content_type()
+                            if ct in ("text/html", "text/plain"):
+                                body += part.get_payload(decode=True).decode(errors="replace")
+                    else:
+                        body = msg.get_payload(decode=True).decode(errors="replace")
 
-            urls = re.findall(r'https?://[^\s"<>]+', body)
-            download_urls = [
-                u for u in urls
-                if "download" in u.lower() or "csv" in u.lower() or "lightspark" in u.lower()
-            ]
-            if download_urls:
-                print(f"[gmail] Found download link on attempt {attempt + 1}")
-                imap.logout()
-                return download_urls[0]
+                    # Extract all https URLs
+                    all_urls = re.findall(r'https?://[^\s"<>\]]+', body)
+                    # Prefer URLs that look like download links
+                    preferred = [u for u in all_urls if any(
+                        kw in u.lower() for kw in ("download", "csv", "report", "export", "file")
+                    )]
+                    chosen = preferred[0] if preferred else (all_urls[0] if all_urls else None)
+                    if chosen:
+                        print(f"[gmail] Found link via '{search_query}' on attempt {attempt + 1}")
+                        print(f"[gmail] URL: {chosen[:100]}")
+                        imap.logout()
+                        return chosen
+                except Exception as e:
+                    print(f"[gmail] Error reading message: {e}")
 
         print(f"[gmail] Attempt {attempt + 1}/30 — no link yet, waiting 10s...")
         time.sleep(10)
