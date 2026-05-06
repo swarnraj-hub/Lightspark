@@ -32,6 +32,11 @@ GMAIL_PASS  = os.getenv("GMAIL_APP_PASSWORD")
 S3_BUCKET = os.getenv("S3_BUCKET", "payout-recon")
 S3_PREFIX = os.getenv("LIGHTSPARK_S3_PREFIX", "lightspark/raw/")
 
+# Webshare rotating proxy
+PROXY_SERVER   = os.getenv("PROXY_SERVER",   "")
+PROXY_USERNAME = os.getenv("PROXY_USERNAME", "")
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def screenshot(page, name):
@@ -364,9 +369,20 @@ async def main():
 
     filename = f"LIGHTSPARK_{args.start_date}_to_{args.end_date}.csv"
 
+    proxy_cfg = None
+    if PROXY_SERVER:
+        proxy_cfg = {"server": PROXY_SERVER}
+        if PROXY_USERNAME:
+            proxy_cfg["username"] = PROXY_USERNAME
+            proxy_cfg["password"] = PROXY_PASSWORD
+        print(f"[proxy] Using: {PROXY_SERVER}")
+    else:
+        print("[proxy] No proxy configured")
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=False,   # real browser on xvfb virtual display — bypasses bot detection
+            headless=False,
+            proxy=proxy_cfg,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",

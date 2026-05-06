@@ -23,29 +23,29 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      # â”€â”€ 1. Checkout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Python setup ──────────────────────────────────────────────────────
+      # â”€â”€ 2. Python setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # ── 3. Install dependencies ───────────────────────────────────────────────
+      # â”€â”€ 3. Install dependencies â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Install Python packages
         run: pip install -r requirements.txt
 
       - name: Install Playwright + Chromium
         run: playwright install chromium --with-deps
 
-      # ── 4. Install xvfb (virtual display for headless=False Chromium) ─────────
+      # â”€â”€ 4. Install xvfb (virtual display for headless=False Chromium) â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Install xvfb
         run: sudo apt-get install -y xvfb
 
-      # ── 5. Run export script ──────────────────────────────────────────────────
+      # â”€â”€ 5. Run export script â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Run Lightspark Export
         env:
           LIGHTSPARK_EMAIL:       ${{ secrets.LIGHTSPARK_EMAIL }}
@@ -58,12 +58,15 @@ jobs:
           AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
+          PROXY_SERVER:           ${{ secrets.PROXY_SERVER }}
+          PROXY_USERNAME:         ${{ secrets.PROXY_USERNAME }}
+          PROXY_PASSWORD:         ${{ secrets.PROXY_PASSWORD }}
         run: |
           xvfb-run --auto-servernum python lightspark_export.py \
             --start_date "${{ inputs.start_date }}" \
             --end_date   "${{ inputs.end_date }}"
 
-      # ── 6. Upload CSV as artifact ─────────────────────────────────────────────
+      # â”€â”€ 6. Upload CSV as artifact â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Upload CSV artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -72,7 +75,7 @@ jobs:
           path: downloads/*.csv
           if-no-files-found: warn
 
-      # ── 7. Upload debug screenshots on failure ────────────────────────────────
+      # â”€â”€ 7. Upload debug screenshots on failure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - name: Upload debug screenshots
         if: failure()
         uses: actions/upload-artifact@v4
