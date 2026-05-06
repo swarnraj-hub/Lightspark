@@ -44,10 +44,17 @@ async def screenshot(page, name):
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 async def do_login(page):
+    if not LIGHTSPARK_EMAIL or not LIGHTSPARK_PASSWORD or not TOTP_SECRET:
+        raise RuntimeError(
+            "[login] LIGHTSPARK_EMAIL / LIGHTSPARK_PASSWORD / LIGHTSPARK_TOTP_SECRET "
+            "env vars are not set."
+        )
+
     print("[login] Navigating to login page...")
     await page.goto(LIGHTSPARK_LOGIN_URL, wait_until="networkidle", timeout=30000)
     await page.wait_for_timeout(2000)
     await screenshot(page, "01_login")
+    print(f"[login] URL: {page.url}")
 
     # Step 1: click "Continue with email" -> /login/email
     try:
@@ -65,6 +72,7 @@ async def do_login(page):
                             wait_until="networkidle")
             await page.wait_for_timeout(2000)
     await screenshot(page, "02_email_form")
+    print(f"[login] URL at form: {page.url}")
 
     # Step 2: fill email
     await page.wait_for_selector(
@@ -74,7 +82,7 @@ async def do_login(page):
     await page.locator(
         'input[placeholder="Email"], input[type="email"]'
     ).first.fill(LIGHTSPARK_EMAIL)
-    print("[login] Email filled")
+    print(f"[login] Email filled: {LIGHTSPARK_EMAIL[:4]}***")
 
     # Step 3: fill password
     await page.wait_for_selector(
@@ -87,77 +95,108 @@ async def do_login(page):
     print("[login] Password filled")
     await screenshot(page, "03_credentials")
 
-    # Step 4: submit
+    # Step 4: submit — wait for navigation away from /login/email
     await page.locator(
         'button[type="submit"], button:has-text("Continue with email")'
     ).first.click()
-    await page.wait_for_timeout(4000)
-    await screenshot(page, "04_after_submit")
+    print("[login] Submit clicked — waiting for navigation...")
+    try:
+        await page.wait_for_url(
+            lambda url: "/login/email" not in url,
+            timeout=15000
+        )
+        print(f"[login] Navigated to: {page.url}")
+    except PlaywrightTimeout:
+        body = (await page.inner_text("body"))[:600]
+        print(f"[login] WARNING: still on /login/email after 15s")
+        print(f"[login] Page text: {body}")
+        await screenshot(page, "04_submit_stuck")
 
-    # Step 5: TOTP dialog (6 individual number boxes)
-    totp_selectors = [
-        'input[aria-label*="Code input 1"]',
-        'input[maxlength="1"][type="number"]',
-        'input[maxlength="6"]',
-        'input[autocomplete="one-time-code"]',
-        'input[placeholder*="code" i]',
-    ]
+    await screenshot(page, "04_after_submit")
+    print(f"[login] URL after submit: {page.url}")
+    body_after = (await page.inner_text("body"))[:500]
+    print(f"[login] Page snippet: {body_after}")
+
+    # Bot detection check
+    body_lower = body_after.lower()
+    if "bot" in body_lower and ("behaviour" in body_lower or "behavior" in body_lower or "detected" in body_lower):
+        print("[login] Bot detection page — waiting 15s...")
+        await page.wait_for_timeout(15000)
+        await screenshot(page, "04b_bot_detected")
+
+    # Step 5: TOTP — wait for any digit input to appear (up to 20s)
+    totp_combined = (
+        'input[aria-label*="Code input"], '
+        'input[maxlength="1"][type="number"], '
+        'input[maxlength="6"], '
+        'input[autocomplete="one-time-code"]'
+    )
     totp_found = False
-    for sel in totp_selectors:
-        try:
-            await page.wait_for_selector(sel, timeout=10000, state="visible")
-            totp_found = True
-            code = pyotp.TOTP(TOTP_SECRET).now()
-            print(f"[login] TOTP: {code}")
-            await page.locator(sel).first.click()
-            await page.keyboard.type(code)
-            break
-        except PlaywrightTimeout:
-            continue
+    try:
+        await page.wait_for_selector(totp_combined, timeout=20000, state="visible")
+        totp_found = True
+    except PlaywrightTimeout:
+        print("[login] No TOTP input after 20s")
 
     if totp_found:
-        await page.wait_for_timeout(2000)
+        code = pyotp.TOTP(TOTP_SECRET).now()
+        print(f"[login] TOTP: {code}")
         await screenshot(page, "05_totp")
+
+        # 6 individual digit boxes?
+        digit_boxes = page.locator('input[maxlength="1"][type="number"]')
+        n_digits = await digit_boxes.count()
+        if n_digits >= 6:
+            await digit_boxes.nth(0).click()
+            for ch in code:
+                await page.keyboard.type(ch)
+                await page.wait_for_timeout(80)
+        else:
+            await page.locator(totp_combined).first.click()
+            await page.keyboard.type(code)
+
+        await page.wait_for_timeout(2000)
         try:
             await page.locator(
                 'button:has-text("Continue"), button[type="submit"]'
             ).first.click(timeout=5000)
         except Exception:
             pass
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(5000)
 
-        # Retry if TOTP expired
+        # Retry if code expired
         if "login" in page.url:
-            print("[login] TOTP may have expired — waiting for next window...")
+            print("[login] TOTP rejected — waiting 31s for next code window...")
             time.sleep(31)
             code = pyotp.TOTP(TOTP_SECRET).now()
             print(f"[login] Retry TOTP: {code}")
-            for sel in totp_selectors:
-                try:
-                    await page.locator(sel).first.click(timeout=3000)
-                    await page.keyboard.type(code)
-                    break
-                except Exception:
-                    continue
+            if n_digits >= 6:
+                await digit_boxes.nth(0).click()
+                for ch in code:
+                    await page.keyboard.type(ch)
+                    await page.wait_for_timeout(80)
+            else:
+                await page.locator(totp_combined).first.fill(code)
             try:
                 await page.locator(
                     'button:has-text("Continue"), button[type="submit"]'
                 ).first.click(timeout=5000)
             except Exception:
                 pass
-            await page.wait_for_timeout(4000)
+            await page.wait_for_timeout(5000)
     else:
-        print("[login] No TOTP screen — proceeding")
+        print("[login] Proceeding without TOTP")
 
     await page.wait_for_load_state("networkidle", timeout=30000)
     await screenshot(page, "06_post_login")
+    print(f"[login] Final URL: {page.url}")
 
     if "login" in page.url:
+        body = (await page.inner_text("body"))[:600]
+        print(f"[login] Page at failure: {body}")
         raise Exception(f"[login] Login failed — still on: {page.url}")
     print(f"[login] Logged in — {page.url}")
 
-
-# ── Generate Report ───────────────────────────────────────────────────────────
 async def generate_report(page, start_date: str, end_date: str):
     """
     start_date / end_date: YYYY-MM-DD
