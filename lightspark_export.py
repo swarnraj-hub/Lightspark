@@ -79,32 +79,31 @@ async def do_login(page):
     await screenshot(page, "02_email_form")
     print(f"[login] URL at form: {page.url}")
 
-    # Step 2: fill email
-    await page.wait_for_selector(
-        'input[placeholder="Email"], input[type="email"]',
-        timeout=15000, state="visible"
-    )
-    await page.locator(
-        'input[placeholder="Email"], input[type="email"]'
-    ).first.fill(LIGHTSPARK_EMAIL)
-    print(f"[login] Email filled: {LIGHTSPARK_EMAIL[:4]}***")
+    # Step 2: fill email — use keyboard.type() so React controlled input fires onChange
+    email_sel = 'input[placeholder="Email"], input[type="email"]'
+    await page.wait_for_selector(email_sel, timeout=15000, state="visible")
+    await page.locator(email_sel).first.click()
+    await page.wait_for_timeout(300)
+    await page.keyboard.press("Control+a")
+    await page.keyboard.type(LIGHTSPARK_EMAIL, delay=40)
+    # Verify React state picked it up
+    filled_email = await page.locator(email_sel).first.input_value()
+    print(f"[login] Email typed: {filled_email[:4]}*** (len={len(filled_email)})")
 
     # Step 3: fill password
-    await page.wait_for_selector(
-        'input[placeholder="Password"], input[type="password"]',
-        timeout=10000, state="visible"
-    )
-    await page.locator(
-        'input[placeholder="Password"], input[type="password"]'
-    ).first.fill(LIGHTSPARK_PASSWORD)
-    print("[login] Password filled")
+    pass_sel = 'input[placeholder="Password"], input[type="password"]'
+    await page.wait_for_selector(pass_sel, timeout=10000, state="visible")
+    await page.locator(pass_sel).first.click()
+    await page.wait_for_timeout(300)
+    await page.keyboard.press("Control+a")
+    await page.keyboard.type(LIGHTSPARK_PASSWORD, delay=40)
+    filled_pass = await page.locator(pass_sel).first.input_value()
+    print(f"[login] Password typed: {'*' * len(filled_pass)} (len={len(filled_pass)})")
     await screenshot(page, "03_credentials")
 
-    # Step 4: submit — wait for navigation away from /login/email
-    await page.locator(
-        'button[type="submit"], button:has-text("Continue with email")'
-    ).first.click()
-    print("[login] Submit clicked — waiting for navigation...")
+    # Step 4: submit via Enter (most reliable with React forms)
+    await page.keyboard.press("Enter")
+    print("[login] Enter pressed — waiting for navigation...")
     try:
         await page.wait_for_url(
             lambda url: "/login/email" not in url,
