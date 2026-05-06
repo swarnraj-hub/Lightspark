@@ -94,74 +94,56 @@ async def do_login(page):
     print(f"[login] Page inputs: {form_info['inputs']}")
     print(f"[login] Page buttons: {form_info['buttons']}")
 
-    # Step 2: type email into visible email field
-    email_sel = 'input[placeholder="Email"], input[type="email"]'
+    # Both email and password are visible from the start (single-step form).
+    # The submit button starts DISABLED. It only enables when React's internal
+    # state has both values. keyboard.type() updates DOM but not React state,
+    # so the button stays disabled. Use the native React value setter instead
+    # (same trick used in generate_report for date inputs).
+    email_sel = 'input[placeholder="Email"], input[type="text"][placeholder]'
+    pass_sel  = 'input[placeholder="Password"], input[type="password"]'
     await page.wait_for_selector(email_sel, timeout=15000, state="visible")
-    await page.locator(email_sel).first.click()
-    await page.wait_for_timeout(400)
-    await page.keyboard.press("Control+a")
-    await page.keyboard.type(LIGHTSPARK_EMAIL, delay=40)
-    filled_email = await page.locator(email_sel).first.input_value()
-    print(f"[login] Email typed: {filled_email[:4]}*** (len={len(filled_email)})")
+    await page.wait_for_selector(pass_sel,  timeout=10000, state="visible")
 
-    # Step 3: advance to password step.
-    # On Lightspark the form may be two-step: email → click Continue → password appears.
-    # Press Enter (or Tab) in the email field to trigger "Continue with email".
-    await page.keyboard.press("Enter")
-    await page.wait_for_timeout(1500)
-    await screenshot(page, "03b_after_email_enter")
+    await page.evaluate("""(args) => {
+        const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        ).set;
+        const emailEl = document.querySelector(
+            'input[placeholder="Email"], input[type="text"][placeholder]'
+        );
+        const passEl = document.querySelector('input[type="password"]');
+        setter.call(emailEl, args.email);
+        emailEl.dispatchEvent(new Event('input',  {bubbles: true}));
+        emailEl.dispatchEvent(new Event('change', {bubbles: true}));
+        setter.call(passEl, args.password);
+        passEl.dispatchEvent(new Event('input',  {bubbles: true}));
+        passEl.dispatchEvent(new Event('change', {bubbles: true}));
+    }""", {"email": LIGHTSPARK_EMAIL, "password": LIGHTSPARK_PASSWORD})
+    await page.wait_for_timeout(800)
 
-    # Check if we're now on a page with a visible password field
-    pass_sel = 'input[placeholder="Password"], input[type="password"]'
-    pass_visible = await page.locator(pass_sel).count() > 0
-    if pass_visible:
-        pass_visible = await page.locator(pass_sel).first.is_visible()
-
-    if not pass_visible:
-        # Try clicking the "Continue with email" button explicitly
-        print("[login] Password field not visible yet — clicking Continue button")
-        try:
-            await page.locator('button:has-text("Continue"), button[type="submit"]').first.click(timeout=5000)
-            await page.wait_for_timeout(1500)
-        except Exception as e:
-            print(f"[login] Continue click failed: {e}")
-        await screenshot(page, "03c_after_continue")
-
-    # Now wait for password field to become visible
-    try:
-        await page.wait_for_selector(pass_sel, timeout=10000, state="visible")
-        print("[login] Password field is visible")
-    except PlaywrightTimeout:
-        print("[login] WARNING: password field never became visible")
-        body = (await page.inner_text("body"))[:400]
-        print(f"[login] Body: {body}")
-
-    # Re-dump inputs to confirm state
-    form_info2 = await page.evaluate("""() => {
-        const inputs = [...document.querySelectorAll('input')].map(el => ({
-            type: el.type, placeholder: el.placeholder,
-            visible: el.offsetParent !== null
-        }));
-        const buttons = [...document.querySelectorAll('button')].map(el => ({
-            text: el.innerText.trim(), visible: el.offsetParent !== null
-        }));
-        return {inputs, buttons};
+    # Confirm React state updated (button should now be enabled)
+    btn_state = await page.evaluate("""() => {
+        const btn = document.querySelector('button[type="submit"]');
+        const emailEl = document.querySelector('input[placeholder="Email"], input[type="text"][placeholder]');
+        const passEl  = document.querySelector('input[type="password"]');
+        return {
+            submitDisabled: btn ? btn.disabled : 'NOT FOUND',
+            emailLen: emailEl ? emailEl.value.length : 0,
+            passLen:  passEl  ? passEl.value.length  : 0
+        };
     }""")
-    print(f"[login] After Continue — inputs: {form_info2['inputs']}")
-    print(f"[login] After Continue — buttons: {form_info2['buttons']}")
-
-    # Step 4: type password
-    await page.locator(pass_sel).first.click()
-    await page.wait_for_timeout(400)
-    await page.keyboard.press("Control+a")
-    await page.keyboard.type(LIGHTSPARK_PASSWORD, delay=40)
-    filled_pass = await page.locator(pass_sel).first.input_value()
-    print(f"[login] Password typed: {'*' * len(filled_pass)} (len={len(filled_pass)})")
+    print(f"[login] After native setter: {btn_state}")
     await screenshot(page, "03_credentials")
 
-    # Step 5: submit
-    await page.keyboard.press("Enter")
-    print("[login] Enter pressed — waiting for navigation...")
+    # Submit — click the button directly (not by text, by type)
+    submit_btn = page.locator('button[type="submit"]')
+    if await submit_btn.count() > 0 and not await submit_btn.first.is_disabled():
+        print("[login] Submit button enabled — clicking")
+        await submit_btn.first.click()
+    else:
+        print("[login] Submit button disabled or missing — pressing Enter")
+        await page.locator(pass_sel).first.press("Enter")
+    print("[login] Submit triggered — waiting for navigation...")
     try:
         await page.wait_for_url(
             lambda url: "/login/email" not in url,
