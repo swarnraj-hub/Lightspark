@@ -79,29 +79,87 @@ async def do_login(page):
     await screenshot(page, "02_email_form")
     print(f"[login] URL at form: {page.url}")
 
-    # Step 2: fill email — use keyboard.type() so React controlled input fires onChange
+    # Dump page structure so we can see the exact form layout
+    form_info = await page.evaluate("""() => {
+        const inputs = [...document.querySelectorAll('input')].map(el => ({
+            type: el.type, placeholder: el.placeholder,
+            visible: el.offsetParent !== null, value_len: el.value.length
+        }));
+        const buttons = [...document.querySelectorAll('button')].map(el => ({
+            text: el.innerText.trim(), type: el.type, disabled: el.disabled,
+            visible: el.offsetParent !== null
+        }));
+        return {inputs, buttons};
+    }""")
+    print(f"[login] Page inputs: {form_info['inputs']}")
+    print(f"[login] Page buttons: {form_info['buttons']}")
+
+    # Step 2: type email into visible email field
     email_sel = 'input[placeholder="Email"], input[type="email"]'
     await page.wait_for_selector(email_sel, timeout=15000, state="visible")
     await page.locator(email_sel).first.click()
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(400)
     await page.keyboard.press("Control+a")
     await page.keyboard.type(LIGHTSPARK_EMAIL, delay=40)
-    # Verify React state picked it up
     filled_email = await page.locator(email_sel).first.input_value()
     print(f"[login] Email typed: {filled_email[:4]}*** (len={len(filled_email)})")
 
-    # Step 3: fill password
+    # Step 3: advance to password step.
+    # On Lightspark the form may be two-step: email → click Continue → password appears.
+    # Press Enter (or Tab) in the email field to trigger "Continue with email".
+    await page.keyboard.press("Enter")
+    await page.wait_for_timeout(1500)
+    await screenshot(page, "03b_after_email_enter")
+
+    # Check if we're now on a page with a visible password field
     pass_sel = 'input[placeholder="Password"], input[type="password"]'
-    await page.wait_for_selector(pass_sel, timeout=10000, state="visible")
+    pass_visible = await page.locator(pass_sel).count() > 0
+    if pass_visible:
+        pass_visible = await page.locator(pass_sel).first.is_visible()
+
+    if not pass_visible:
+        # Try clicking the "Continue with email" button explicitly
+        print("[login] Password field not visible yet — clicking Continue button")
+        try:
+            await page.locator('button:has-text("Continue"), button[type="submit"]').first.click(timeout=5000)
+            await page.wait_for_timeout(1500)
+        except Exception as e:
+            print(f"[login] Continue click failed: {e}")
+        await screenshot(page, "03c_after_continue")
+
+    # Now wait for password field to become visible
+    try:
+        await page.wait_for_selector(pass_sel, timeout=10000, state="visible")
+        print("[login] Password field is visible")
+    except PlaywrightTimeout:
+        print("[login] WARNING: password field never became visible")
+        body = (await page.inner_text("body"))[:400]
+        print(f"[login] Body: {body}")
+
+    # Re-dump inputs to confirm state
+    form_info2 = await page.evaluate("""() => {
+        const inputs = [...document.querySelectorAll('input')].map(el => ({
+            type: el.type, placeholder: el.placeholder,
+            visible: el.offsetParent !== null
+        }));
+        const buttons = [...document.querySelectorAll('button')].map(el => ({
+            text: el.innerText.trim(), visible: el.offsetParent !== null
+        }));
+        return {inputs, buttons};
+    }""")
+    print(f"[login] After Continue — inputs: {form_info2['inputs']}")
+    print(f"[login] After Continue — buttons: {form_info2['buttons']}")
+
+    # Step 4: type password
     await page.locator(pass_sel).first.click()
-    await page.wait_for_timeout(300)
+    await page.wait_for_timeout(400)
     await page.keyboard.press("Control+a")
     await page.keyboard.type(LIGHTSPARK_PASSWORD, delay=40)
     filled_pass = await page.locator(pass_sel).first.input_value()
     print(f"[login] Password typed: {'*' * len(filled_pass)} (len={len(filled_pass)})")
     await screenshot(page, "03_credentials")
 
-    # Step 4: submit via Enter (most reliable with React forms)
+    # Step 5: submit
     await page.keyboard.press("Enter")
     print("[login] Enter pressed — waiting for navigation...")
     try:
